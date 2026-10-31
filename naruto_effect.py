@@ -1,189 +1,225 @@
-"""Two-hand trigger and smoke/log compositing for body substitution."""
+"""Smoke cloud for the Naruto mode.
+
+A puff of smoke bursts out of your silhouette, you are swapped for the empty
+room (or back) while it is thickest, then it rolls outward, drifts up and
+breaks into wisps. Everything is drawn in code, the way stylized smoke is
+usually painted: many round billows, each lit from the upper left with a
+cool grey underside, layered back to front so the lumps stay distinct. Each
+billow erodes from its noisy edge as it ages, which is what leaves wisps.
+"""
 
 from __future__ import annotations
-
-import math
-from pathlib import Path
 
 import cv2
 import numpy as np
 
 
-EFFECT_SECONDS = 1.45
-LOG_PATH = Path(__file__).resolve().parent / "assets" / "substitution_log.png"
+SECONDS = 1.5         # Matches the "poof" sound, which fades out by ~1.6 s.
+CUT = 0.16            # The swap happens here, hidden by the thickest smoke.
+WORK_WIDTH = 512      # The cloud is drawn at this width, then scaled up.
+
+LIGHT = np.array((248, 248, 250), np.float32)    # BGR: lit side of a billow.
+SHADOW = np.array((168, 158, 152), np.float32)   # Cool grey underside.
+LIGHT_DIRECTION = np.array((-0.45, -0.7, 0.55), np.float32)  # From the upper left, in front.
 
 
-def joined_hands_from_landmarks(hands, width: int, height: int) -> bool:
-    """Recognize two nearby, similarly oriented open hands in image space."""
-    if len(hands) < 2:
-        return False
-    points = [np.array([(p.x * width, p.y * height) for p in hand])
-              for hand in hands[:2] if len(hand) == 21]
-    if len(points) != 2 or not all(np.isfinite(hand).all() for hand in points):
-        return False
-    palms = [hand[[0, 5, 9, 13, 17]].mean(axis=0) for hand in points]
-    scale = [max(float(np.linalg.norm(hand[5] - hand[17])),
-                 float(np.linalg.norm(hand[0] - hand[9]))) for hand in points]
-    if min(scale) < 8.0 or max(scale) > min(scale) * 2.2:
-        return False
-    size = sum(scale) * 0.5
-    directions = [hand[9] - hand[0] for hand in points]
-    alignment = float(np.dot(*directions) /
-                      max(1e-6, np.linalg.norm(directions[0]) * np.linalg.norm(directions[1])))
-    fingertips = [hand[[8, 12, 16, 20]].mean(axis=0) for hand in points]
-    return (
-        alignment > 0.25
-        and np.linalg.norm(palms[0] - palms[1]) < size * 1.55
-        and np.linalg.norm(fingertips[0] - fingertips[1]) < size * 1.9
-    )
+def _smoothstep(edge0: float, edge1: float, values):
+    values = np.clip((values - edge0) / max(edge1 - edge0, 1e-6), 0.0, 1.0)
+    return values * values * (3.0 - 2.0 * values)
 
 
-def substitution_anchor(mask: np.ndarray) -> tuple[int, int, int]:
-    """Place the log at the person's torso instead of at a fixed screen spot."""
-    height, width = mask.shape
-    binary = (mask > 0.45).astype(np.uint8)
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(binary)
-    if count <= 1:
-        return width // 2, height // 2, int(height * 0.57)
-    largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-    x, y, w, h, _ = stats[largest]
-    size = int(np.clip(h * 0.58, height * 0.24, height * 0.70))
-    center_x = int(np.clip(x + w * 0.5, size // 3, width - size // 3))
-    center_y = int(np.clip(y + h * 0.52, size // 3, height - size // 3))
-    return center_x, center_y, size
+def _ease(edge0: float, edge1: float, value: float) -> float:
+    """Scalar smoothstep, without numpy's per-call overhead (called ~100x a frame)."""
+    value = min(1.0, max(0.0, (value - edge0) / max(edge1 - edge0, 1e-6)))
+    return value * value * (3.0 - 2.0 * value)
 
 
-def load_log() -> np.ndarray:
-    sprite = cv2.imread(str(LOG_PATH), cv2.IMREAD_UNCHANGED)
-    if sprite is None or sprite.ndim != 3 or sprite.shape[2] != 4:
-        raise RuntimeError(f"Sprite del tronco non disponibile: {LOG_PATH}")
-    return sprite
+def _fractal(rng: np.random.Generator, size: int, octaves: int = 4, base: int = 3) -> np.ndarray:
+    total = np.zeros((size, size), np.float32)
+    weight = 0.0
+    for octave in range(octaves):
+        cells = base * 2 ** octave
+        layer = rng.random((cells, cells), dtype=np.float32)
+        total += cv2.resize(layer, (size, size), interpolation=cv2.INTER_CUBIC) / 2 ** octave
+        weight += 1 / 2 ** octave
+    return total / weight
 
 
-def overlay_log(frame: np.ndarray, sprite: np.ndarray, anchor: tuple[int, int, int],
-                opacity: float = 1.0, scale: float = 1.0,
-                cache: dict[int, np.ndarray] | None = None) -> None:
-    if opacity <= 0:
-        return
-    cx, cy, target_height = anchor
-    height = max(1, int(target_height * scale))
-    width = max(1, int(height * sprite.shape[1] / sprite.shape[0]))
-    sized = cache.get(height) if cache is not None else None
-    if sized is None:
-        sized = cv2.resize(sprite, (width, height), interpolation=cv2.INTER_AREA)
-        if cache is not None:
-            cache[height] = sized
-    x1, y1 = cx - width // 2, cy - height // 2
-    x2, y2 = x1 + width, y1 + height
-    left, top = max(0, x1), max(0, y1)
-    right, bottom = min(frame.shape[1], x2), min(frame.shape[0], y2)
-    if left >= right or top >= bottom:
-        return
-    part = sized[top - y1:bottom - y1, left - x1:right - x1]
-    alpha = (part[:, :, 3:4].astype(np.float32) / 255.0) * opacity
-    destination = frame[top:bottom, left:right]
-    destination[:] = np.clip(
-        part[:, :, :3].astype(np.float32) * alpha
-        + destination.astype(np.float32) * (1.0 - alpha),
-        0, 255,
-    ).astype(np.uint8)
+def _lit(height: np.ndarray, step: float) -> np.ndarray:
+    """Shade 0..1 of a height map lit from LIGHT_DIRECTION."""
+    light = LIGHT_DIRECTION / np.linalg.norm(LIGHT_DIRECTION)
+    gy, gx = np.gradient(height, step)
+    lit = (-gx * light[0] - gy * light[1] + light[2]) / np.sqrt(gx * gx + gy * gy + 1)
+    return np.clip(0.28 + 0.72 * np.clip(lit, 0, 1), 0, 1).astype(np.float32)
 
 
-def landed_log_anchor(anchor: tuple[int, int, int], frame_height: int) -> tuple[int, int, int]:
-    cx, cy, size = anchor
-    return cx, max(cy, frame_height - round(size * 0.48)), size
+def make_billows(rng: np.random.Generator, count: int = 8, size: int = 128):
+    """Pre-lit billow sprites: (density 0..1, shade 0..1) pairs.
+
+    Each is a cauliflower-like lump: a bumpy outline, a cloudy inside, and a
+    surface of small bumps lit from the upper left, with a grey underside.
+    """
+    y, x = np.mgrid[-1:1:size * 1j, -1:1:size * 1j].astype(np.float32)
+    radius = np.sqrt(x * x + y * y)
+    step = 2.0 / size
+    billows = []
+    for _ in range(count):
+        edge = 0.68 + 0.32 * _fractal(rng, size, 3, base=4)          # Bumpy outline.
+        r = np.clip(radius / edge, 0, 1)
+        inside = 0.55 + 0.45 * _fractal(rng, size, 5, base=4)        # Cloudy texture.
+        density = cv2.GaussianBlur(np.clip(1 - r ** 3, 0, 1) * inside, (0, 0), size / 100)
+        # Height of a soft dome plus small bumps; its slope gives the lighting.
+        bumps = cv2.GaussianBlur(_fractal(rng, size, 3, base=5), (0, 0), size / 28)
+        height = np.sqrt(np.clip(1 - r * r, 0, 1)) + 0.22 * bumps
+        shade = _lit(height, step)
+        billows.append((density / max(density.max(), 1e-6), shade.astype(np.float32)))
+    return billows
 
 
-def falling_log_anchor(anchor: tuple[int, int, int], frame_height: int,
-                       age: float) -> tuple[int, int, int]:
-    """Accelerate downwards, touch the frame floor, then settle with a small bounce."""
-    cx, cy, size = anchor
-    floor_y = landed_log_anchor(anchor, frame_height)[1]
-    distance = floor_y - cy
-    if distance <= 0 or age <= 0.18:
-        return anchor
-    elapsed = age - 0.18
-    gravity = frame_height * 3.2
-    fall = gravity * elapsed * elapsed * 0.5
-    if fall < distance:
-        return cx, cy + round(fall), size
-    landed_at = math.sqrt(2.0 * distance / gravity)
-    bounce_age = elapsed - landed_at
-    bounce = size * 0.075 * math.exp(-5.0 * bounce_age) * abs(math.sin(11.0 * bounce_age))
-    return cx, floor_y - round(bounce), size
+_BILLOWS: list | None = None
 
 
-def _smoke_layer(frame: np.ndarray, anchor: tuple[int, int, int],
-                 age: float, foreground: bool) -> None:
-    if age >= EFFECT_SECONDS:
-        return
-    cx, cy, size = anchor
-    rng = np.random.default_rng(9127 if foreground else 1934)
-    reveal = min(1.0, age / 0.16)
-    fade = max(0.0, 1.0 - max(0.0, age - 0.33) / 1.12)
-    if fade <= 0:
-        return
-    # Smoke only occupies the area around the log; avoid allocating and
-    # blending a full-size RGBA video frame twice per animation frame.
-    margin = int(size * 1.35)
-    left, top = max(0, cx - margin), max(0, cy - margin)
-    right = min(frame.shape[1], cx + margin + 1)
-    bottom = min(frame.shape[0], cy + margin + 1)
-    if left >= right or top >= bottom:
-        return
-    layer = np.zeros((bottom - top, right - left, 4), dtype=np.uint8)
-    radius = size * (0.27 + 0.54 * min(age, 1.0))
-    for _ in range(22 if foreground else 18):
-        angle = rng.uniform(0, 2 * math.pi)
-        distance = radius * rng.uniform(0.25, 1.0)
-        x = int(cx + math.cos(angle) * distance) - left
-        y = int(cy + math.sin(angle) * distance * 0.63 - age * size * 0.13) - top
-        puff = max(2, int(size * rng.uniform(0.09, 0.20) * (0.7 + age * 0.7)))
-        color = (229, 235, 235, 190) if foreground else (152, 162, 166, 125)
-        cv2.ellipse(layer, (x, y), (puff, int(puff * 0.68)),
-                    rng.uniform(-25, 25), 0, 360, color, -1, cv2.LINE_AA)
-    # Long white winding smoke ribbons echo the supplied anime reference.
-    for direction in (-1, 1):
-        center = (int(cx + direction * size * 0.13) - left,
-                  int(cy - size * 0.13 - age * size * 0.09) - top)
-        axes = (max(2, int(size * (0.30 + age * 0.27))),
-                max(2, int(size * (0.09 + age * 0.12))))
-        cv2.ellipse(layer, center, axes, direction * 15, 20, 230,
-                    (244, 247, 245, 220), max(2, int(size * 0.025)), cv2.LINE_AA)
-    occupied = cv2.findNonZero(layer[:, :, 3])
-    if occupied is None:
-        return
-    x, y, width, height = cv2.boundingRect(occupied)
-    destination = frame[top + y:top + y + height, left + x:left + x + width]
-    layer = layer[y:y + height, x:x + width]
-    alpha = (layer[:, :, 3:4].astype(np.float32) / 255.0) * reveal * fade
-    destination[:] = np.clip(
-        layer[:, :, :3].astype(np.float32) * alpha
-        + destination.astype(np.float32) * (1.0 - alpha),
-        0, 255,
-    ).astype(np.uint8)
+def _shared_billows():
+    """Billow textures are the same for every burst: make them once."""
+    global _BILLOWS
+    if _BILLOWS is None:
+        _BILLOWS = make_billows(np.random.default_rng(2024), count=12)
+    return _BILLOWS
 
 
-def render_substitution(frame: np.ndarray, background: np.ndarray, mask: np.ndarray,
-                        sprite: np.ndarray, anchor: tuple[int, int, int], age: float,
-                        log_cache: dict[int, np.ndarray] | None = None) -> np.ndarray:
-    """Quick body replacement, expanding smoke, then a persistent wooden log."""
-    if age >= EFFECT_SECONDS:
-        output = background.copy()
-        overlay_log(output, sprite, landed_log_anchor(anchor, output.shape[0]), cache=log_cache)
+class SmokeCloud:
+    """One burst of smoke, laid out around a person mask."""
+
+    def __init__(self, mask: np.ndarray, rng: np.random.Generator | None = None):
+        rng = rng or np.random.default_rng()
+        self.height, self.width = mask.shape
+        self.scale = min(1.0, WORK_WIDTH / self.width)
+        work = (max(1, round(self.width * self.scale)), max(1, round(self.height * self.scale)))
+        self.work_w, self.work_h = work
+        small = cv2.resize(mask.astype(np.float32), work, interpolation=cv2.INTER_AREA)
+        self.billows = _shared_billows()
+
+        points = np.argwhere(small > 0.5)
+        if len(points) < 10:  # Nobody found: burst in the middle of the frame.
+            yy, xx = np.mgrid[int(work[1] * 0.25):work[1], int(work[0] * 0.38):int(work[0] * 0.62)]
+            points = np.stack([yy.ravel(), xx.ravel()], 1)
+            small = np.zeros_like(small)
+            small[points[:, 0], points[:, 1]] = 1.0
+        top, left = points.min(0)
+        bottom, right = points.max(0)
+        box_h, box_w = max(8, bottom - top), max(8, right - left)
+        center = np.array([(left + right) / 2, (top + bottom) / 2], np.float32)
+        size = float(np.sqrt(box_w * box_h))
+        self.size = size
+
+        # Billows born all over you, plus a few rolling out sideways from the base.
+        body_count, base_count = 84, 14
+        body = points[rng.choice(len(points), body_count)][:, ::-1].astype(np.float32)
+        base_y = min(bottom, work[1] - 1) - rng.uniform(0, 0.12, base_count) * box_h
+        base_x = center[0] + rng.uniform(-0.6, 0.6, base_count) * box_w
+        start = np.vstack([body, np.stack([base_x, base_y], 1)])
+        count = len(start)
+        away = start - center
+        away /= np.maximum(np.linalg.norm(away, axis=1, keepdims=True), 1e-3)
+        speed = rng.uniform(0.5, 1.5, count) * size
+        speed[-base_count:] *= 1.4
+        away[-base_count:, 1] *= 0.25  # Base billows roll along the floor.
+        self.start = start
+        self.velocity = away * speed[:, None] + np.array([0, -0.15 * size], np.float32)
+        self.rise = rng.uniform(0.2, 0.45, count) * size       # Upward drift, per s².
+        # A mix of big and small billows (log-normal sizes) looks far less regular.
+        self.radius1 = np.clip(rng.lognormal(np.log(0.14), 0.4, count), 0.06, 0.3) * size
+        self.radius0 = self.radius1 * rng.uniform(0.4, 0.6, count)
+        self.born = np.where(rng.random(count) < 0.7, 0.0, rng.uniform(0, 0.08, count))
+        self.life = rng.uniform(0.9, 1.45, count)              # When each billow is gone.
+        self.kind = rng.integers(0, len(self.billows), count)
+        self.flip = rng.random(count) < 0.5                    # Mirror half: more variety.
+        # Painted back to front; billows near the edge of the burst sit behind.
+        depth = np.linalg.norm(start - center, axis=1) / max(size, 1) + rng.uniform(0, 0.5, count)
+        self.order = np.argsort(-depth)
+
+        # A dense core over you guarantees nothing of you shows at the cut. It is
+        # blurred well past your outline so the cloud never takes your shape.
+        grow = max(3, int(size * 0.1)) | 1
+        core = cv2.dilate(small, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow, grow)))
+        self.core = cv2.GaussianBlur(core, (0, 0), size * 0.05)
+        self.core_shade = _lit(self.core * 6.0 / max(size, 1), 1.0)
+
+    def layer(self, t: float) -> tuple[np.ndarray, np.ndarray] | None:
+        """(opacity, shade 0..1) at the working size, or None once it has cleared."""
+        if t >= SECONDS:
+            return None
+        opacity = np.zeros((self.work_h, self.work_w), np.float32)
+        paint = np.zeros((self.work_h, self.work_w), np.float32)    # Shade, 0..1.
+
+        # The core: a soft, evenly lit mass behind the billows while you are swapped.
+        core = _ease(0.0, 0.05, t) * (1 - _ease(0.18, 0.32, t))
+        if core > 0.01:
+            alpha = np.clip(self.core * 1.6, 0, 1) * core
+            opacity[:] = alpha
+            paint[:] = self.core_shade
+
+        tau = t - self.born
+        for index in self.order:
+            age = float(tau[index])
+            life = float(self.life[index])
+            if age < 0 or age >= life:
+                continue
+            # Fast burst outward that slows down (drag), then a lazy rise.
+            travel = (1 - np.exp(-4.0 * age)) / 4.0
+            x, y = self.start[index] + self.velocity[index] * travel
+            y -= self.rise[index] * age * age
+            grow = 1 - np.exp(-age / 0.08)
+            radius = (self.radius0[index] + (self.radius1[index] - self.radius0[index]) * grow
+                      + 0.16 * self.size * age)
+            # Each billow eats in from its noisy edge as it ages, leaving wisps.
+            erode = 0.04 + 0.92 * _ease(0.3 * life, life, age) ** 0.9
+            appear = _ease(0.0, 0.025, age)
+            self._paint(opacity, paint, index, x, y, radius, erode, appear)
+        if opacity.max() < 0.004:
+            return None
+        return opacity, paint
+
+    def _paint(self, opacity, paint, index, x, y, radius, erode, appear) -> None:
+        diameter = max(3, int(radius * 2))
+        left, top = int(x - radius), int(y - radius)
+        x0, y0 = max(0, left), max(0, top)
+        x1, y1 = min(self.work_w, left + diameter), min(self.work_h, top + diameter)
+        if x0 >= x1 or y0 >= y1:
+            return
+        density, shade = self.billows[self.kind[index]]
+        if self.flip[index]:
+            density, shade = density[:, ::-1], shade[:, ::-1]
+        crop = np.s_[y0 - top:y1 - top, x0 - left:x1 - left]
+        density = cv2.resize(density, (diameter, diameter), interpolation=cv2.INTER_LINEAR)[crop]
+        shade = cv2.resize(shade, (diameter, diameter), interpolation=cv2.INTER_LINEAR)[crop]
+        alpha = _smoothstep(erode, erode + 0.24, density) * appear
+        area = np.s_[y0:y1, x0:x1]
+        # "Over": this billow covers what was painted behind it.
+        paint[area] = paint[area] * (1 - alpha) + shade * alpha
+        opacity[area] = opacity[area] * (1 - alpha) + alpha
+
+    def composite(self, base: np.ndarray, t: float) -> np.ndarray:
+        result = self.layer(t)
+        if result is None:
+            return base.copy()
+        opacity, shade = result
+        rows, cols = np.nonzero(opacity > 0.004)
+        pad = 2
+        y0, y1 = max(0, rows.min() - pad), min(self.work_h, rows.max() + pad + 1)
+        x0, x1 = max(0, cols.min() - pad), min(self.work_w, cols.max() + pad + 1)
+        # Same region at full size; only it is scaled up and blended.
+        fx0, fy0 = int(x0 / self.scale), int(y0 / self.scale)
+        fx1 = min(self.width, int(np.ceil(x1 / self.scale)))
+        fy1 = min(self.height, int(np.ceil(y1 / self.scale)))
+        size = (fx1 - fx0, fy1 - fy0)
+        alpha = np.clip(cv2.resize(opacity[y0:y1, x0:x1], size, interpolation=cv2.INTER_CUBIC), 0, 1)
+        # Color only the smoke's own box, at the working size.
+        color = SHADOW + (LIGHT - SHADOW) * shade[y0:y1, x0:x1, None]
+        flash = 0.55 * (1 - _ease(0.0, 0.14, t))   # The burst starts nearly white.
+        color = np.clip(color + (255 - color) * flash, 0, 255).astype(np.uint8)
+        paint = cv2.resize(color, size, interpolation=cv2.INTER_CUBIC)
+        output = base.copy()
+        region = output[fy0:fy1, fx0:fx1]
+        output[fy0:fy1, fx0:fx1] = cv2.blendLinear(paint, region, alpha, 1 - alpha)
         return output
-    if age >= 0.13:
-        output = background.copy()
-    else:
-        person_alpha = mask * max(0.0, 1.0 - age / 0.13)
-        output = (
-            frame.astype(np.float32) * person_alpha[:, :, None]
-            + background.astype(np.float32) * (1.0 - person_alpha[:, :, None])
-        ).astype(np.uint8)
-    _smoke_layer(output, anchor, age, foreground=False)
-    log_opacity = min(1.0, max(0.0, (age - 0.05) / 0.15))
-    moving_anchor = falling_log_anchor(anchor, output.shape[0], age)
-    overlay_log(output, sprite, moving_anchor, log_opacity,
-                scale=1.15 - min(age, 0.25) * 0.6, cache=log_cache)
-    _smoke_layer(output, anchor, age, foreground=True)
-    return output

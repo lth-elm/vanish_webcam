@@ -1,74 +1,175 @@
-# VanishCam — webcam disappearance effects
+# VanishCam: vanish from your webcam with a hand sign
 
-Video is processed on your computer. It is neither recorded nor sent to a server. The preview window and virtual camera show only the video and effects, without overlaid menus, instructions, or text.
+Make a hand sign and you disappear from your own webcam, in front of a clean
+background. Make it again and you come back. It works in the preview window and,
+through a virtual camera, in Zoom, Meet, Teams, Discord or OBS.
 
-For step-by-step instructions in English and Italian, see the [user guide](USER_GUIDE_EN_IT.md).
+Everything runs on your computer. Video is never recorded or sent anywhere.
 
-## ☕ Buy me a coffee
+## The four effects
 
-If you like this project and want to support it, you can buy me a coffee through [PayPal](https://paypal.me/nicovic17) or [Revolut](https://revolut.me/nicoauriemma).
+| Key | Effect | Sign to vanish (and to come back) | What happens |
+| --- | --- | --- | --- |
+| 1 | **Classic Dissolve** | V sign (index and middle fingers apart), held for 0.4 seconds | A ragged, white-hot cyan edge burns down from your head to your feet in 1.5 seconds, shedding thousands of glowing motes that drift up and fade. Repeat the sign and the motes gather back as you re-form from the feet up. |
+| 2 | **Particles** | V sign, held for 0.4 seconds | A ragged front sweeps up from your feet to your head; everything below it breaks into glowing cyan blocks that drift up and fade, in under a second. Repeat the sign and you rebuild from the head down. |
+| 3 | **Naruto Smoke** | Palms pressed together, fingers side by side, held for 0.5 seconds | A cloud of smoke bursts out of you and you are gone while it is thickest; it rolls out, rises and tears into wisps. Repeat the sign and you step back out of a new cloud. |
+| 4 | **Goku Teleport** | Index and middle fingers held together on your forehead for 0.8 seconds | Instant Transmission: thin streaks drop over you, you blink out, and a jittery white outline of your silhouette lingers for a beat before it vanishes too, all in a third of a second. Repeat the sign and the outline flashes back as you pop in. |
 
-## Download for Windows
+After an effect plays, drop your hand before signing again (the preview reminds you
+if the sign is still up). A progress bar in the preview shows how long to
+hold each sign. While you are vanished, a small live view of you sits in the corner of the
+preview so you can aim the sign; its frame lights up when the sign is recognized. Only
+you see it: the virtual camera keeps sending the empty room.
 
-[Download VanishCam.exe]( https://nicoaauriemma.vercel.app/shop ) and double-click it to run the app. You do not need to install Python.
+## Start it
 
-The published EXE may predate the Particles and Goku modes. To use them now, run the local scripts or rebuild the EXE from these sources.
+**macOS:** double-click `VanishCam.command`, or in Terminal:
 
-## Getting started
-
-1. Double-click `AVVIA_LOCALE.bat`.
-2. In the start menu, choose **Normal Vanish**, **Naruto Vanish**, **Particles**, or **Goku** with the mouse or the `1`, `2`, `3`, and `4` keys.
-3. Step out of the camera frame for 4 seconds while the background is captured. The terminal tells you when you can step back in.
-
-**Normal Vanish:** Raise your index and middle fingers in a V sign. The dissolve starts as soon as the gesture is recognized and lasts about 3.6 seconds.
-
-**Particles:** Make the same V sign as in Normal Vanish. Your silhouette breaks into small colored fragments that drift sideways as if carried by the wind. The effect lasts about 2.1 seconds. It captures your silhouette once when the effect starts to keep the video smooth.
-
-**Goku:** Hold your index and middle fingers straight and together against your forehead for 1 second. Animated vertical comic-style lines run across your silhouette just before you teleport away and linger briefly afterward. To reappear, lower your hand, then repeat the gesture for another 1 second. The return uses the reverse effect. If you break the pose, the countdown starts over. `assets/teleport.MP3` plays on both disappearance and reappearance. The terminal shows the countdown for each gesture. The `V` and `R` keys are disabled in this mode: the gesture is the only way to disappear and reappear. No text is overlaid on the video.
-
-**Naruto Vanish:** Bring your palms together in front of the webcam, with your fingers side by side rather than interlaced. Keep both hands visible. As soon as the gesture is recognized, you vanish in a cloud of smoke and a wooden log appears, falls, and remains visible until you press `R`. No microphone is needed. Naruto mode uses `hand_landmarker.task` to track both hands. `assets/vanish.MP3` plays through your computer speakers when the disappearance starts, including when triggered with `V`. You can trigger it again after pressing `R`.
-
-To start a mode without the menu:
-
-```powershell
-local_app\AVVIA_LOCALE.bat --mode naruto
-local_app\AVVIA_LOCALE.bat --mode normal
-local_app\AVVIA_LOCALE.bat --mode particles
-local_app\AVVIA_LOCALE.bat --mode goku
+```bash
+./VanishCam.command
 ```
 
-## Virtual camera and OBS
+**Windows:** double-click `VanishCam.bat`. **Linux:** `bash VanishCam.command`.
 
-If [OBS Studio](https://obsproject.com/) is installed, the app automatically tries to open **OBS Virtual Camera**. The terminal shows the device name. Use `AVVIA_VIRTUAL.bat` to require a virtual camera. Select **OBS Virtual Camera** in the app that will receive the video. OBS's virtual camera must be stopped while this app is producing its output.
+The first run creates a Python environment in `.venv`, installs the components and
+downloads two MediaPipe models from Google (about 10 MB), so it needs internet once. It
+installs again on its own after an update changes `requirements.txt`.
+You need Python 3.10 or newer, and on macOS an Apple silicon Mac (MediaPipe has no
+Intel Mac build).
 
-To use the effect in an OBS scene, run `AVVIA_OBS.bat`, add a **Window Capture** source, select **Webcam - Anteprima**, and then start the virtual camera from OBS. Alternatively, use [Unity Capture](https://github.com/schellingb/UnityCapture) as a separate virtual video source:
+The VanishCam window opens with your camera on the left and a settings panel on the
+right. Then:
 
-```powershell
-local_app\AVVIA_VIRTUAL.bat --virtual-backend unitycapture
+1. On macOS, allow camera access when asked.
+2. Pick an effect in the panel (click a card, or press `1` to `4`).
+3. Press **Space** (or **Capture background**), then **step out of the frame** for the
+   4-second countdown while it learns what is behind you.
+4. Step back in and make the sign shown at the bottom of the preview.
+
+## Use it in a video call
+
+VanishCam sends its output to a virtual camera, which you pick as your camera in the
+call app.
+
+- **macOS and Windows:** install [OBS Studio](https://obsproject.com/) 30 or newer. On
+  macOS, open OBS once, click **Start Virtual Camera**, approve the system extension,
+  then click **Stop Virtual Camera** and quit OBS. VanishCam now finds
+  **OBS Virtual Camera** on its own.
+- In Zoom, Meet, Teams, etc., choose **OBS Virtual Camera** as the camera.
+- Only one program can feed the OBS virtual camera, so don't start it in OBS while
+  VanishCam is running.
+
+The virtual camera gets the clean, un-mirrored image. Call apps mirror your self-view
+themselves, so other people see you (and any text behind you) the right way round. The
+hints, countdown and key help are drawn only in the local preview window.
+
+To use VanishCam inside an OBS scene instead, run it with `--no-virtual-camera` and add
+a **Window Capture** of the **VanishCam** window (press `H` to hide the hints and `Tab`
+to hide the panel first).
+[Unity Capture](https://github.com/schellingb/UnityCapture) also works on Windows:
+`--virtual-backend unitycapture`.
+
+## Settings and keys
+
+Everything is in the panel on the right, and each setting shows its key:
+
+| Key | Action |
+| --- | --- |
+| `1` to `4` | Switch effect |
+| `Space` | Capture the background (starts the countdown) |
+| `V` | Vanish, or come back, without the sign |
+| `C` | Next camera (or pick one by name in the Camera list) |
+| `M` | Mirror the preview on/off |
+| `O` | Virtual camera on/off |
+| `S` | Sound on/off (volume slider in the panel) |
+| `G` | Same sign brings you back, on/off |
+| `H` | Hide or show the hints on the preview |
+| `Tab` | Hide or show the panel |
+| `F` | Full screen |
+| `Q`, or `Esc` outside full screen | Quit |
+
+The panel also has the resolution (1080p by default, or 720p and 540p for slower
+computers) and how long the Goku sign must be held. Everything you change is
+remembered in:
+
+- macOS: `~/Library/Application Support/VanishCam/settings.json`
+- Windows: `%APPDATA%\VanishCam\settings.json`
+- Linux: `~/.config/VanishCam/settings.json`
+
+Command-line options apply to one run and are not saved:
+
+```bash
+./VanishCam.command --mode goku --camera 1 --width 1920 --height 1080
 ```
 
-OBS has only one virtual camera. Do not use it as both an OBS input and output at the same time. See the [pyvirtualcam documentation](https://github.com/letmaik/pyvirtualcam#supported-virtual-cameras).
+| Option | Effect |
+| --- | --- |
+| `--mode normal\|particles\|naruto\|goku` | Start with this effect selected |
+| `--camera N` | Use webcam number N (see `--list-cameras`) |
+| `--width W --height H` | Video size: 1920 x 1080, 1280 x 720 or 960 x 540 |
+| `--no-mirror`, `--no-sound`, `--fullscreen` | What they say |
+| `--virtual-camera` / `--no-virtual-camera` | Require the virtual camera, or never use it |
+| `--virtual-backend`, `--virtual-device`, `--fps` | Virtual camera driver, device and max FPS |
+| `--list-cameras` | List webcams and exit |
+| `--gesture-debug` | Show what the hand tracker sees, in the preview and the terminal |
+| `--reset-settings` | Start from the default settings |
 
-## Controls
+## Troubleshooting
 
-- `SPACE`: capture a new background.
-- `R`: make the person reappear.
-- `V`: manually start the selected mode's effect.
-- `F`: toggle fullscreen.
-- `Q` or `ESC`: quit and release the cameras.
+- **"Camera could not be opened" on macOS:** open System Settings > Privacy & Security
+  > Camera, allow the app you launched VanishCam from (Terminal, iTerm, VS Code...), and
+  restart that app. Close other apps that use the camera.
+- **Wrong camera (for example your iPhone via Continuity Camera):** pick the right one
+  in the panel's Camera list, by name. The list refreshes each time you open it.
+- **Choppy video:** choose 720p in the panel.
+- **The sign is not recognized:** keep your hand fully in the frame and well lit, and
+  run with `--gesture-debug`. For Goku, keep your face visible when you start, and hold
+  the two fingers together and straight against your forehead. For Naruto, keep both
+  hands in view.
+- **Ghosting or bits of you left behind:** press `Space`, step fully out of frame, and
+  let it capture the background again. Avoid moving the camera or changing the lighting
+  after that.
+- **No virtual camera:** see "Use it in a video call". The app keeps working with the
+  preview window only.
 
-The `V` and `R` keys are disabled in Goku mode.
+## Development
 
-You can change the camera, resolution, and maximum virtual-output FPS:
-
-```powershell
-local_app\AVVIA_LOCALE.bat --camera 1 --width 1280 --height 720 --fps 30
+```bash
+.venv/bin/python -m unittest discover -p "test_*.py"
+.venv/bin/python vanish_cam.py --self-test
 ```
 
-To troubleshoot gesture recognition without adding text to the video, pass `--gesture-debug`. Diagnostic information appears only in the terminal.
+| File | What it does |
+| --- | --- |
+| `vanish_cam.py` | Entry point: command-line options, settings, self-test |
+| `window.py` | The window: preview with hints, settings panel, keyboard shortcuts |
+| `engine.py` | Camera, background capture, gestures, effects and virtual camera, run on a background thread |
+| `gestures.py` | Sign recognition for every effect, hold/release timing, detection thread |
+| `effects.py` | Vanish and return animations for every effect |
+| `naruto_effect.py` | Smoke cloud drawing for the Naruto effect |
+| `settings.py` | Saved settings |
+| `vanish_sound.py` | Effect sounds |
+| `tools/make_sounds.py` | Synthesizes the `.wav` sounds in `assets/` |
+| `BUILD_WINDOWS.bat`, `VanishCam.spec` | Build a standalone Windows `VanishCam.exe` |
 
-## Visual assets
+Video processing and gesture tracking each run on their own thread, so neither the
+window nor the video stalls while the other works.
 
-The [wooden log](assets/substitution_log.png) is an original illustration generated with ImageGen using the supplied image as a visual reference. Smoke is drawn in real time by `naruto_effect.py` so it follows the person's position and scales with the video. We also considered a [CC0 smoke sprite sheet](https://opengameart.org/content/smoke-sprite-sheet), but the procedural animation adapts better to dynamic positioning without an additional asset. No anime frames or assets are included in the project.
+## Assets
 
-Goku mode uses the [MediaPipe BlazeFace short-range model](https://github.com/google-ai-edge/mediapipe/blob/master/mediapipe/tasks/web/vision/README.md) to estimate the forehead position and `hand_landmarker.task` to track the fingers. The teleport's visual trace is drawn in code, without anime frames.
+- The particles, dissolve and dissolve-return sounds are synthesized from scratch by
+  `tools/make_sounds.py`.
+- The Goku teleport sound is the Instant Transmission sound effect from *Dragon Ball Z*,
+  supplied by the project owner (see [assets/README.md](assets/README.md)). It is not
+  original to this project, so check its rights before redistributing builds.
+- Smoke, particles, streaks and outlines are drawn in code. No anime frames or images are
+  included.
+- Hand, face and person tracking use Google's [MediaPipe](https://ai.google.dev/edge/mediapipe)
+  models.
+
+## Credits
+
+Based on [vanish_webcam](https://github.com/Nicovic17/vanish_webcam) by Nicovic17,
+who created the original dissolve and Naruto effects. You can support the
+original author through [PayPal](https://paypal.me/nicovic17) or
+[Revolut](https://revolut.me/nicoauriemma).

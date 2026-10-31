@@ -8,3 +8,7 @@ models/
 /build/
 /dist/*
 !/dist/VanishCam.exe
+
+# Reference videos and comparison clips (third-party material, kept local).
+reference/
+.DS_Store
