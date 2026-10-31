@@ -35,6 +35,7 @@ MUTED = "#a1a1aa"
 FAINT = "#71717a"
 GREEN = "#4ade80"
 AMBER = "#fbbf24"
+RED = "#f87171"
 OBS_URL = "https://obsproject.com/download"
 
 PHASE_LABELS = {
@@ -204,7 +205,9 @@ class VideoView(QWidget):
             self._mode_pill(painter, target, status)
             self._virtual_pill(painter, target, status)
             if status.phase in ("ready", "vanished"):
-                self._hint(painter, target, status)
+                hint = self._hint(painter, target, status)
+                if status.live is not None:
+                    self._live_view(painter, target, status, hint)
             if status.debug:
                 painter.setFont(font(12 * self.scale))
                 painter.setPen(QColor(GREEN))
@@ -332,9 +335,12 @@ class VideoView(QWidget):
         painter.setFont(value)
         painter.drawText(rect.adjusted(self.s(30), 0, 0, 0), Qt.AlignmentFlag.AlignVCenter, text)
 
-    def _hint(self, painter: QPainter, target: QRectF, status: Status) -> None:
+    def _hint(self, painter: QPainter, target: QRectF, status: Status) -> QRectF:
         info = MODE_INFO[status.mode]
-        if status.phase == "ready":
+        if status.blocked:
+            # After an effect the sign only counts again once you have lowered it.
+            text = "Lower your hand, then show the sign again"
+        elif status.phase == "ready":
             text = info.hint
         else:
             text = "Do the same sign to come back, or press V"
@@ -354,6 +360,45 @@ class VideoView(QWidget):
             self._panel(painter, bar, 255, None, "#3f3f46")
             done = QRectF(bar.left(), bar.top(), bar.width() * status.hold, bar.height())
             self._panel(painter, done, 255, None, info.accent)
+        return rect
+
+    def _live_view(self, painter: QPainter, target: QRectF, status: Status, hint: QRectF) -> None:
+        """You, small, in a corner while you are invisible, so you can aim the sign.
+
+        Only the preview draws it; the virtual camera never gets it. The frame
+        lights up in the effect's color when the sign is recognized.
+        """
+        live = np.ascontiguousarray(status.live)
+        image = QImage(live.data, live.shape[1], live.shape[0], live.strides[0],
+                       QImage.Format.Format_BGR888)
+        width = min(target.width() * 0.24, self.s(300))
+        height = width * live.shape[0] / live.shape[1]
+        rect = QRectF(target.right() - self.s(16) - width, hint.top() - self.s(12) - height,
+                      width, height)
+        radius = self.s(12)
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, radius, radius)
+        painter.save()
+        painter.setClipPath(clip)
+        painter.drawImage(rect, image)
+        painter.restore()
+        if status.sign and not status.blocked:
+            edge = QColor(MODE_INFO[status.mode].accent)
+        elif status.blocked:
+            edge = QColor(RED)  # Distinct from every mode's accent.
+        else:
+            edge = color("#ffffff", 90)
+        painter.setPen(QPen(edge, self.s(2.5) if status.sign or status.blocked else self.s(1.5)))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect, radius, radius)
+        label_font = font(self.s(12), QFont.Weight.Medium)
+        text = "Only you see this"
+        label = QRectF(rect.left() + self.s(8), rect.top() + self.s(8),
+                       self._text_width(text, label_font) + self.s(18), self.s(24))
+        self._panel(painter, label, 170)
+        painter.setPen(QColor(TEXT))
+        painter.setFont(label_font)
+        painter.drawText(label, Qt.AlignmentFlag.AlignCenter, text)
 
     def _toast(self, painter: QPainter, target: QRectF) -> None:
         left = self.toast_until - time.perf_counter()

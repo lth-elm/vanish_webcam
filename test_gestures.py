@@ -329,6 +329,15 @@ class HoldTriggerTests(unittest.TestCase):
         self.assertFalse(trigger.update(False, 1.2))
         self.assertTrue(trigger.update(True, 1.3))
 
+    def test_reports_when_a_held_sign_blocks_firing_again(self):
+        trigger = HoldTrigger(hold_seconds=0.0, release=0.3)
+        self.assertFalse(trigger.blocked(0.0))
+        self.assertTrue(trigger.update(True, 0.0))
+        trigger.update(True, 0.5)
+        self.assertTrue(trigger.blocked(0.55))      # Still up: lower it first.
+        trigger.update(False, 0.9)
+        self.assertFalse(trigger.blocked(0.9))      # Lowered long enough: armed again.
+
 
 class DetectionWorkerTests(unittest.TestCase):
     def test_runs_detector_off_the_main_thread_and_closes_it(self):

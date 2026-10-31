@@ -14,10 +14,10 @@ SOUND_PATH = ASSETS_DIR / "vanish.MP3"
 
 # Sound played when each mode makes you vanish, and when it brings you back.
 MODE_SOUNDS = {
-    "normal": ("dissolve_shimmer.wav", None),
+    "normal": ("dissolve_shimmer.wav", "dissolve_gather.wav"),
     "particles": ("particles_wind.wav", None),
     "naruto": ("vanish.MP3", "vanish.MP3"),
-    "goku": ("teleport_out.wav", "teleport_in.wav"),
+    "goku": ("teleport.wav", "teleport.wav"),
 }
 
 

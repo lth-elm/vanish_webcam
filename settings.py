@@ -23,17 +23,17 @@ class ModeInfo:
 
 
 MODE_INFO = {
-    "normal": ModeInfo("Classic Dissolve", "V sign",
-                       "Fade away with a glowing cyan edge.",
+    "normal": ModeInfo("Classic Dissolve", "V sign, 0.4 s",
+                       "Burn away from the head down in cyan light.",
                        "Show a V sign to vanish", "#50CDEB"),
-    "particles": ModeInfo("Particles", "V sign",
-                          "Blow away in colored fragments.",
+    "particles": ModeInfo("Particles", "V sign, 0.4 s",
+                          "Break into cyan blocks from your feet up.",
                           "Show a V sign to turn into particles", "#FFBE5A"),
-    "naruto": ModeInfo("Naruto Substitution", "Palms pressed together",
-                       "Smoke, and a log takes your place.",
+    "naruto": ModeInfo("Naruto Smoke", "Palms pressed together, 0.5 s",
+                       "Vanish in a cloud of smoke.",
                        "Press your palms together to vanish", "#F09650"),
-    "goku": ModeInfo("Goku Teleport", "Two fingers on your forehead, 1 s",
-                     "Speed lines, a flash, and you're gone.",
+    "goku": ModeInfo("Goku Teleport", "Two fingers on your forehead",
+                     "Streaks fall, you blink out, an outline lingers.",
                      "Hold two fingers on your forehead to teleport", "#FFD23C"),
 }
 
@@ -67,7 +67,8 @@ class Settings:
     hud: bool = True
     # Repeating the sign while vanished brings you back.
     gesture_reappear: bool = True
-    goku_hold_seconds: float = 1.0
+    # With detection latency this fires ~0.85 s after the sign, like the original demo.
+    goku_hold_seconds: float = 0.8
     panel_visible: bool = True
 
     def validate(self) -> "Settings":

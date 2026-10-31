@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 
+import effects
 import engine as app
 import vanish_cam
 from gestures import Detection
@@ -163,20 +164,24 @@ class EngineFlowTests(unittest.TestCase):
             self.run_until(instance, clock, frame, 0.6)  # No sign yet.
             self.assertEqual(instance.state.phase, "ready")
             instance.worker.active = True
-            self.run_until(instance, clock, frame, 0.1)
+            self.run_until(instance, clock, frame, 0.3)   # Shorter than the V-sign hold.
+            self.assertEqual(instance.state.phase, "ready")
+            self.run_until(instance, clock, frame, 0.15)
             self.assertEqual(instance.state.phase, "vanishing")
 
             output = self.run_until(instance, clock, frame, instance.effect.seconds + 0.1)
             self.assertEqual(instance.state.phase, "vanished")
             np.testing.assert_array_equal(output, background)
 
-            # Still holding the V: nothing happens until it is released.
+            # Still holding the V: nothing happens until it is released, and the
+            # preview says so.
             self.run_until(instance, clock, frame, 0.5)
             self.assertEqual(instance.state.phase, "vanished")
+            self.assertTrue(instance.snapshot().blocked)
             instance.worker.active = False
             self.run_until(instance, clock, frame, 0.5)
             instance.worker.active = True
-            self.run_until(instance, clock, frame, 0.1)
+            self.run_until(instance, clock, frame, 0.45)
             self.assertEqual(instance.state.phase, "appearing")
             output = self.run_until(instance, clock, frame, instance.effect.seconds + 0.1)
             self.assertEqual(instance.state.phase, "ready")
@@ -189,13 +194,48 @@ class EngineFlowTests(unittest.TestCase):
             instance.state = app.State(phase="ready", started=clock.now, background=background)
             self.run_until(instance, clock, frame, 0.5)
             instance.worker.active = True
-            self.run_until(instance, clock, frame, 0.8)
+            self.run_until(instance, clock, frame, 0.6)
             self.assertEqual(instance.state.phase, "ready")
             self.run_until(instance, clock, frame, 0.3)
             self.assertEqual(instance.state.phase, "vanishing")
             instance.post("goku_hold", 1.5)
             instance.run_commands()
             self.assertEqual(instance.trigger.hold_seconds, 1.5)
+
+    def test_particles_needs_a_short_hold(self):
+        clock = Clock()
+        with patch("time.perf_counter", clock), patch.object(app, "DETECTION_INTERVAL", 0):
+            instance, frame, background = make_engine("particles")
+            instance.state = app.State(phase="ready", started=clock.now, background=background)
+            self.run_until(instance, clock, frame, 0.5)
+            instance.worker.active = True
+            self.run_until(instance, clock, frame, 0.3)
+            self.assertEqual(instance.state.phase, "ready")
+            self.run_until(instance, clock, frame, 0.2)
+            self.assertEqual(instance.state.phase, "vanishing")
+
+    def test_live_view_only_while_vanished_and_never_sent_out(self):
+        frame, background, mask = scene()
+        instance, _, _ = make_engine()
+        capture = Mock()
+        capture.read.return_value = (True, frame)
+        instance.capture = capture
+        camera = Mock(width=160, height=90, device="OBS Virtual Camera")
+        instance.state = app.State(phase="vanished", background=background[:, ::-1].copy())
+        with patch.object(app, "open_virtual_camera", return_value=camera):
+            output, status = instance.next_frame()
+        self.assertIsNotNone(status.live)
+        self.assertEqual(status.live.shape[1], app.LIVE_VIEW_WIDTH)
+        # The call only ever gets the empty room.
+        np.testing.assert_array_equal(camera.send.call_args.args[0], background)
+        instance.state.phase = "ready"
+        with patch.object(app, "open_virtual_camera", return_value=camera):
+            _, status = instance.next_frame()
+        self.assertIsNone(status.live)
+
+    def test_naruto_needs_palms_held_half_a_second(self):
+        instance, _, _ = make_engine("naruto")
+        self.assertEqual(instance.trigger.hold_seconds, 0.5)
 
     def test_v_key_toggles_without_a_sign(self):
         instance, frame, background = make_engine()
@@ -212,7 +252,21 @@ class EngineFlowTests(unittest.TestCase):
         instance.run_commands()
         self.assertEqual(instance.settings.mode, "goku")
         self.assertEqual(instance.state.phase, "ready")
-        self.assertEqual(instance.trigger.hold_seconds, 1.0)
+        self.assertEqual(instance.trigger.hold_seconds, 0.8)
+        self.assertIsInstance(instance.effect, effects.GokuEffect)
+
+    def test_mode_switch_from_the_window_loads_the_new_effect(self):
+        # The window shares `settings` with the engine and updates the mode
+        # before the engine reads its command; the effect must still change.
+        instance, frame, background = make_engine("goku")
+        for mode, kind in (("normal", effects.DissolveEffect),
+                           ("particles", effects.ParticlesEffect),
+                           ("naruto", effects.NarutoEffect)):
+            instance.settings.mode = mode
+            instance.post("mode", mode)
+            instance.run_commands()
+            self.assertIsInstance(instance.effect, kind)
+            self.assertEqual(instance.snapshot().mode, mode)
 
     def test_mirror_toggle_flips_the_saved_background(self):
         instance, frame, background = make_engine()

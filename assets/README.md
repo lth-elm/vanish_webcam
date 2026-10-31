@@ -1,14 +1,16 @@
-# Substitution log sprite
+# Smoke
 
-`substitution_log.png` was generated with the built-in ImageGen tool. The user
-image was used as a visual reference for object shape and mood, not as an edit
-target. The sprite is an original transparent-background illustration.
+The Naruto smoke cloud is drawn in code by `naruto_effect.py` (billow textures,
+lighting and motion are all procedural). A
+[CC0 smoke sprite sheet](https://opengameart.org/content/smoke-sprite-sheet) was
+reviewed but is not included: procedural smoke scales and follows the detected
+person.
 
-Final prompt:
+# Teleport sound
 
-> Create a single ORIGINAL 2D hand-painted anime-style game sprite for live video compositing, using the user's attached image ONLY as a visual reference for the object and mood. Subject: one short thick wooden substitution log floating diagonally (bottom-left to top-right), soft desaturated pale sage-green bark with visible wood grain, dark ink cracks and small dark notches, round cut end with concentric wood rings visible at lower-left. Dramatic clean silhouette, strong cel shading and highlights, polished Japanese animation look. Center the entire log, leave a modest transparent margin around all edges. NO smoke, NO particles, NO background, NO scenery, NO shadow outside the object, NO people, NO text, NO symbols or logos. True transparent alpha background; isolated cutout. Asset should be immediately usable as a sprite over live webcam video.
-
-For smoke, the app uses its own procedurally animated shapes in
-`naruto_effect.py`. A [CC0 smoke sprite sheet](https://opengameart.org/content/smoke-sprite-sheet)
-was reviewed but is not included because the procedural smoke scales and follows
-the detected person dynamically.
+`teleport.wav` is the Instant Transmission sound effect from *Dragon Ball Z*, the
+same one heard in the original author's Goku demo. It was supplied by the project
+owner as an MP3 and prepared with Python and ffmpeg: the 0.82 s of leading silence
+was cut (keeping 3 ms before the onset, so it plays the moment the effect starts),
+the clip was kept to 1.4 s with a 0.12 s fade-out, and it was raised 6 dB to peak at
+-3 dBFS. Vanish and return both play it. It is not original to this project.

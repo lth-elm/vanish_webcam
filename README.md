@@ -10,13 +10,16 @@ Everything runs on your computer. Video is never recorded or sent anywhere.
 
 | Key | Effect | Sign to vanish (and to come back) | What happens |
 | --- | --- | --- | --- |
-| 1 | **Classic Dissolve** | V sign (index and middle fingers apart) | You fade away from the top with a glowing cyan edge. |
-| 2 | **Particles** | V sign | Your silhouette crumbles into colored fragments that the wind carries off to the right. |
-| 3 | **Naruto Substitution** | Palms pressed together, fingers side by side | A puff of smoke and a wooden log drops where you stood. |
-| 4 | **Goku Teleport** | Index and middle fingers held together on your forehead for 1 second | Comic speed lines run up your silhouette, you flash and squeeze into a beam, and blink out with a teleport sound. Repeat the sign to teleport back in. |
+| 1 | **Classic Dissolve** | V sign (index and middle fingers apart), held for 0.4 seconds | A ragged, white-hot cyan edge burns down from your head to your feet in 1.5 seconds, shedding thousands of glowing motes that drift up and fade. Repeat the sign and the motes gather back as you re-form from the feet up. |
+| 2 | **Particles** | V sign, held for 0.4 seconds | A ragged front sweeps up from your feet to your head; everything below it breaks into glowing cyan blocks that drift up and fade, in under a second. Repeat the sign and you rebuild from the head down. |
+| 3 | **Naruto Smoke** | Palms pressed together, fingers side by side, held for 0.5 seconds | A cloud of smoke bursts out of you and you are gone while it is thickest; it rolls out, rises and tears into wisps. Repeat the sign and you step back out of a new cloud. |
+| 4 | **Goku Teleport** | Index and middle fingers held together on your forehead for 0.8 seconds | Instant Transmission: thin streaks drop over you, you blink out, and a jittery white outline of your silhouette lingers for a beat before it vanishes too, all in a third of a second. Repeat the sign and the outline flashes back as you pop in. |
 
-After an effect plays, drop your hand before signing again. A progress bar in the
-preview shows the Goku hold.
+After an effect plays, drop your hand before signing again (the preview reminds you
+if the sign is still up). A progress bar in the preview shows how long to
+hold each sign. While you are vanished, a small live view of you sits in the corner of the
+preview so you can aim the sign; its frame lights up when the sign is recognized. Only
+you see it: the virtual camera keeps sending the empty room.
 
 ## Start it
 
@@ -143,7 +146,7 @@ Command-line options apply to one run and are not saved:
 | `engine.py` | Camera, background capture, gestures, effects and virtual camera, run on a background thread |
 | `gestures.py` | Sign recognition for every effect, hold/release timing, detection thread |
 | `effects.py` | Vanish and return animations for every effect |
-| `naruto_effect.py` | Smoke and log drawing for the Naruto effect |
+| `naruto_effect.py` | Smoke cloud drawing for the Naruto effect |
 | `settings.py` | Saved settings |
 | `vanish_sound.py` | Effect sounds |
 | `tools/make_sounds.py` | Synthesizes the `.wav` sounds in `assets/` |
@@ -154,11 +157,13 @@ window nor the video stalls while the other works.
 
 ## Assets
 
-- The teleport, wind and shimmer sounds are synthesized from scratch by
-  `tools/make_sounds.py`; no recorded or sampled audio is used.
-- The [wooden log](assets/substitution_log.png) is an original illustration (see
-  [assets/README.md](assets/README.md)). Smoke, particles and speed lines are drawn in
-  code. No anime frames or assets are included.
+- The particles, dissolve and dissolve-return sounds are synthesized from scratch by
+  `tools/make_sounds.py`.
+- The Goku teleport sound is the Instant Transmission sound effect from *Dragon Ball Z*,
+  supplied by the project owner (see [assets/README.md](assets/README.md)). It is not
+  original to this project, so check its rights before redistributing builds.
+- Smoke, particles, streaks and outlines are drawn in code. No anime frames or images are
+  included.
 - Hand, face and person tracking use Google's [MediaPipe](https://ai.google.dev/edge/mediapipe)
   models.
 

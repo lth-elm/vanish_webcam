@@ -55,10 +55,15 @@ MODEL_URLS = {
 }
 
 CALIBRATION_SECONDS = 4.0
+# How long a sign must be held before it fires, per mode (Goku's is a setting).
+# Particles fires ~0.5 s after the V sign shows, like the original demo.
+SIGN_HOLD_SECONDS = {"normal": 0.4, "particles": 0.4, "naruto": 0.5}
 BACKGROUND_SAMPLE_SECONDS = 0.55
 DETECTION_INTERVAL = 0.05
 # Hand, face and person tracking run on a copy no wider than this.
 ANALYSIS_WIDTH = 1280
+# Width of the live view the preview shows while you are vanished (never sent out).
+LIVE_VIEW_WIDTH = 384
 CAMERA_PERMISSION_WAIT = 30.0
 IS_MAC = platform.system() == "Darwin"
 
@@ -271,6 +276,9 @@ class Status:
     toasts: list[str]
     error: str
     waiting: str
+    sign: bool = False                 # The latest detection saw the trigger sign.
+    blocked: bool = False              # The sign is still up from last time: lower it first.
+    live: np.ndarray | None = None     # Small raw camera view while vanished, preview only.
 
 
 class Engine:
@@ -281,6 +289,9 @@ class Engine:
         self.state = State()
         self.effects: dict[str, Effect] = {}
         self.effect: Effect | None = None
+        # The mode whose effect is loaded. The window shares `settings` and
+        # updates settings.mode itself, so that field cannot tell us.
+        self.mode: str | None = None
         self.sounds = ModeSounds(settings.sound, settings.volume)
         self.trigger = HoldTrigger()
         self.clock_start = time.perf_counter()
@@ -299,6 +310,8 @@ class Engine:
         self.error = ""
         self.waiting = ""
         self.pending_toggle = False
+        self.sign = False
+        self.live: np.ndarray | None = None
         self._analysis: tuple[int, np.ndarray] | None = None
         self._frame_id = 0
 
@@ -352,7 +365,7 @@ class Engine:
     # -- commands (run on the engine thread)
 
     def command_mode(self, mode: str) -> None:
-        if mode != self.settings.mode:
+        if mode != self.mode:
             self.set_mode(mode)
 
     def command_calibrate(self) -> None:
@@ -397,17 +410,19 @@ class Engine:
 
     def command_goku_hold(self, seconds: float) -> None:
         self.settings.goku_hold_seconds = seconds
-        if self.settings.mode == "goku":
+        if self.mode == "goku":
             self.trigger.hold_seconds = seconds
 
     # -- helpers
 
     def set_mode(self, mode: str, announce: bool = True) -> None:
-        self.settings.mode = mode
+        self.settings.mode = self.mode = mode
         if mode not in self.effects:
             self.effects[mode] = create_effect(mode)
         self.effect = self.effects[mode]
-        self.trigger = HoldTrigger(self.settings.goku_hold_seconds if mode == "goku" else 0.0)
+        hold = (self.settings.goku_hold_seconds if mode == "goku"
+                else SIGN_HOLD_SECONDS.get(mode, 0.0))
+        self.trigger = HoldTrigger(hold)
         self.trigger.require_release()
         self.sounds.preload(mode)
         if self.state.phase in ("vanishing", "vanished", "appearing"):
@@ -469,16 +484,16 @@ class Engine:
         state.phase = "vanishing" if direction == OUT else "appearing"
         state.started = time.perf_counter()
         if direction == OUT:
-            self.sounds.play_vanish(self.settings.mode)
+            self.sounds.play_vanish(self.mode)
         else:
-            self.sounds.play_return(self.settings.mode)
+            self.sounds.play_return(self.mode)
 
     def poll_gesture(self, frame: np.ndarray, now: float) -> bool:
         """Feed the detector and return True when the trigger sign fires."""
         if self.worker.error is not None:
             raise RuntimeError(f"Gesture detection failed: {self.worker.error}")
         if now - self.last_submit >= DETECTION_INTERVAL:
-            if self.worker.submit(self.settings.mode, self.analysis_rgb(frame),
+            if self.worker.submit(self.mode, self.analysis_rgb(frame),
                                   self.timestamp_ms(), now):
                 self.last_submit = now
         latest = self.worker.latest()
@@ -486,8 +501,9 @@ class Engine:
             return False
         sequence, mode, captured_at, detection = latest
         self.last_result = sequence
-        if mode != self.settings.mode:
+        if mode != self.mode:
             return False
+        self.sign = detection.active
         self.debug = detection.info if self.args.gesture_debug else ""
         if self.args.gesture_debug and now - self.last_debug_print >= 1.0:
             log(f"Gesture: {detection.info}")
@@ -575,6 +591,9 @@ class Engine:
                 frame = self.read_frame()
                 output = self.step(frame)
                 self.send_virtual(output)
+                # While you are invisible, the preview still shows you where your hand is.
+                self.live = (self._live_view(frame) if self.state.phase == "vanished"
+                             else None)
             except RuntimeError as error:
                 self.error = str(error)
                 log(self.error)
@@ -582,11 +601,17 @@ class Engine:
             time.sleep(0.05)
         return output, self.snapshot()
 
+    @staticmethod
+    def _live_view(frame: np.ndarray) -> np.ndarray:
+        height, width = frame.shape[:2]
+        size = (LIVE_VIEW_WIDTH, max(1, round(height * LIVE_VIEW_WIDTH / width)))
+        return cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
+
     def snapshot(self) -> Status:
         state, now = self.state, time.perf_counter()
         toasts, self.toasts = self.toasts, []
         return Status(
-            mode=self.settings.mode,
+            mode=self.mode or self.settings.mode,
             phase=state.phase,
             countdown=(CALIBRATION_SECONDS - (now - state.started)
                        if state.phase == "calibrating" else None),
@@ -598,6 +623,9 @@ class Engine:
             toasts=toasts,
             error=self.error,
             waiting=self.waiting,
+            sign=self.sign and state.phase in ("ready", "vanished"),
+            blocked=(state.phase in ("ready", "vanished") and self.trigger.blocked(now)),
+            live=self.live,
         )
 
 

@@ -1,4 +1,6 @@
-"""Synthesize the original effect sounds in assets/ (no recorded or sampled audio).
+"""Synthesize the wind and shimmer sounds in assets/ (no recorded or sampled audio).
+
+The Goku teleport sound is not made here: see assets/README.md.
 
 Run from the repository root:  python tools/make_sounds.py
 The output is deterministic, so regenerating gives identical files.
@@ -18,20 +20,6 @@ ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
 def _time(seconds: float) -> np.ndarray:
     return np.arange(int(RATE * seconds), dtype=np.float64) / RATE
-
-
-def _sweep(start_hz: float, end_hz: float, seconds: float) -> np.ndarray:
-    """Exponential frequency sweep, returned as phase-continuous sine."""
-    t = _time(seconds)
-    ratio = end_hz / start_hz
-    phase = 2 * np.pi * start_hz * seconds * (ratio ** (t / seconds) - 1) / np.log(ratio)
-    return np.sin(phase)
-
-
-def _envelope(length: int, attack: float, decay: float) -> np.ndarray:
-    t = np.arange(length) / RATE
-    rise = np.clip(t / max(attack, 1e-4), 0, 1)
-    return rise * np.exp(-t / max(decay, 1e-4))
 
 
 def _bandpassed_noise(rng: np.random.Generator, seconds: float,
@@ -62,74 +50,82 @@ def _bell(seconds: float, partials: list[tuple[float, float]], decay: float) -> 
     return tone * np.exp(-t / decay)
 
 
-def teleport(reverse: bool) -> np.ndarray:
-    """A bright 'zip' with a metallic ring: out climbs, in falls."""
-    rng = np.random.default_rng(81 if reverse else 80)
-    seconds = 0.75
-    length = int(RATE * seconds)
-    mix = np.zeros(length)
-
-    zip_seconds = 0.16
-    zip_tone = (_sweep(2600, 380, zip_seconds) if reverse else _sweep(380, 2600, zip_seconds))
-    zip_tone = np.tanh(2.2 * zip_tone)  # A little edge, like a comic sound effect.
-    zip_env = np.sin(np.linspace(0, np.pi, zip_tone.size)) ** 0.6
-    zip_at = int(RATE * (0.05 if reverse else 0.0))
-    mix[zip_at:zip_at + zip_tone.size] += 0.55 * zip_tone * zip_env
-
-    whoosh = _bandpassed_noise(rng, 0.32, 900, np.linspace(2500, 9000, int(RATE * 0.32)))
-    whoosh *= np.sin(np.linspace(0, np.pi, whoosh.size)) ** 1.5
-    mix[:whoosh.size] += 0.35 * whoosh
-
-    ring = _bell(0.6, [(1760, 1.0), (2637, 0.55), (4186, 0.3), (5274, 0.12)], decay=0.16)
-    ring_at = int(RATE * (0.0 if reverse else 0.1))
-    end = min(length, ring_at + ring.size)
-    mix[ring_at:end] += 0.28 * ring[:end - ring_at] * _envelope(end - ring_at, 0.004, 10)
-
-    # A soft low thump grounds the moment you blink out (or land).
-    thump = np.sin(2 * np.pi * 95 * _time(0.18)) * _envelope(int(RATE * 0.18), 0.003, 0.05)
-    thump_at = int(RATE * (0.17 if reverse else 0.12))
-    mix[thump_at:thump_at + thump.size] += 0.45 * thump
-
-    stereo = np.stack([mix, mix], axis=1)
-    return _fade(stereo, 0.004, 0.06)
-
-
 def wind() -> np.ndarray:
-    """Wind gust that sweeps from left to right, matching the particle drift."""
+    """Particles: a whoosh that climbs with the front sweeping up your body, and a
+    crackle of tiny grains for the blocks peeling off. Timed to the effect:
+    the front eases in over 0.64 s and the last blocks are gone by 0.95 s."""
     rng = np.random.default_rng(12)
-    seconds = 2.3
+    seconds = 1.1
     t = _time(seconds)
-    sweep = 400 + 1600 * np.sin(np.pi * np.clip(t / seconds, 0, 1)) ** 2
-    gust = _bandpassed_noise(rng, seconds, sweep * 0.5, sweep * 2.2)
-    swell = np.sin(np.pi * np.clip(t / seconds, 0, 1)) ** 1.6
-    flutter = 0.82 + 0.18 * np.sin(2 * np.pi * 5.3 * t + 1.2 * np.sin(2 * np.pi * 0.7 * t))
-    sparkle = _bandpassed_noise(rng, seconds, 5000, 11000)
-    sparkle *= swell
-    mono = 0.7 * gust * swell * flutter + 0.08 * sparkle
-    pan = np.clip(t / seconds, 0, 1)
+    front = np.clip(t / 0.64, 0, 1) ** 1.8          # Same easing as the visual front.
+    centre = 500 * (6000 / 500) ** front
+    whoosh = _bandpassed_noise(rng, seconds, centre * 0.55, centre * 1.6)
+    swell = np.clip(t / 0.05, 0, 1) * (0.55 + 0.45 * front) * np.exp(-np.clip(t - 0.66, 0, None) / 0.12)
+
+    # Grains: short clicks of high noise, densest where the front moves fastest.
+    crackle = np.zeros_like(t)
+    length = int(RATE * 0.01)
+    rate = 60 + 260 * front                          # Grains per second.
+    at = rng.exponential(1 / rate[0])
+    while at < 0.85:
+        start = int(at * RATE)
+        grain = np.diff(rng.standard_normal(length + 1)) * np.hanning(length)  # Bright click.
+        crackle[start:start + length] += grain * rng.uniform(0.3, 1.0)
+        at += rng.exponential(1 / rate[start])
+    crackle *= np.exp(-np.clip(t - 0.7, 0, None) / 0.1)
+
+    mono = 0.75 * whoosh * swell + 0.25 * crackle
+    pan = 0.5 + 0.25 * np.sin(2 * np.pi * 1.3 * t)  # A little movement across the stereo field.
     stereo = np.stack([mono * np.cos(pan * np.pi / 2), mono * np.sin(pan * np.pi / 2)], axis=1)
-    return _fade(stereo * 1.25, 0.05, 0.3)
+    return _fade(stereo, 0.01, 0.15)
 
 
 def shimmer() -> np.ndarray:
-    """Rising glassy shimmer for the classic dissolve."""
+    """Classic dissolve: a soft electric crackle that follows the glowing edge down
+    (0.05 to 1.5 s, easing in and out), over glassy chimes for the motes, then a
+    bright tail as the last motes drift away by 2.1 s."""
     rng = np.random.default_rng(33)
-    seconds = 3.6
+    seconds = 2.3
     length = int(RATE * seconds)
+    t = _time(seconds)
     mix = np.zeros((length, 2))
+    # Glassy chimes, densest while the edge sweeps, falling in pitch as it moves down.
     notes = [1318.5, 1568.0, 1975.5, 2349.3, 2637.0, 3136.0]
-    for index in range(46):
-        at = int(RATE * (seconds * 0.85) * (index / 46) ** 0.8 + rng.integers(0, 2000))
+    for index in range(40):
+        at_s = 0.05 + 1.5 * (index / 40) + rng.uniform(0, 0.05)
         hz = notes[int(rng.integers(0, len(notes)))] * (2 if rng.random() < 0.3 else 1)
-        ping = _bell(0.7, [(hz, 1.0), (hz * 2.01, 0.2)], decay=0.18)
+        hz *= 1.0 - 0.18 * at_s / 1.6
+        ping = _bell(0.6, [(hz, 1.0), (hz * 2.01, 0.2)], decay=0.14)
+        at = int(RATE * at_s)
         end = min(length, at + ping.size)
         pan = rng.random()
-        gain = 0.09 * (0.6 + 0.4 * rng.random())
+        gain = 0.08 * (0.6 + 0.4 * rng.random())
         mix[at:end, 0] += gain * ping[:end - at] * (1 - pan)
         mix[at:end, 1] += gain * ping[:end - at] * pan
-    air = _bandpassed_noise(rng, seconds, 3000, 9000)
-    mix += 0.04 * (air * np.linspace(0, 1, length) ** 2)[:, None]
-    return _fade(mix, 0.02, 0.4)
+    # Electric crackle: bursts of bright noise, gated at random, along the sweep.
+    sweep = np.clip((t - 0.05) / 1.45, 0, 1)
+    swell = np.sin(np.pi * sweep) ** 0.7 * (t < 1.55)
+    gate = (rng.random(int(seconds * 300)) < 0.45).astype(float)
+    gate = np.repeat(gate, int(np.ceil(length / gate.size)))[:length]
+    gate = np.convolve(gate, np.hanning(64) / 32, mode="same")
+    crackle = _bandpassed_noise(rng, seconds, 2500, 9000) * gate * swell
+    hum = np.sin(2 * np.pi * 110 * t + 0.6 * np.sin(2 * np.pi * 220 * t)) * swell
+    air = _bandpassed_noise(rng, seconds, 5000, 11000) * np.exp(-np.clip(t - 1.5, 0, None) / 0.3)
+    air *= np.clip(t / 0.8, 0, 1)
+    mono = 0.14 * crackle + 0.05 * hum + 0.05 * air
+    mix += mono[:, None]
+    return _fade(mix, 0.01, 0.3)
+
+
+def gather(vanish: np.ndarray) -> np.ndarray:
+    """Classic return: the vanish sound backwards, squeezed to the 1.4 s return,
+    so the motes' chimes swell up into you as you re-form."""
+    start = vanish[:int(RATE * 1.75)][::-1]
+    length = int(RATE * 1.4)
+    position = np.linspace(0, len(start) - 1, length)
+    squeezed = np.stack([np.interp(position, np.arange(len(start)), start[:, channel])
+                         for channel in range(2)], axis=1)
+    return _fade(squeezed, 0.15, 0.04)
 
 
 def _fade(samples: np.ndarray, fade_in: float, fade_out: float) -> np.ndarray:
@@ -153,10 +149,10 @@ def write_wav(path: Path, samples: np.ndarray, peak: float = 0.85) -> None:
 
 def main() -> None:
     ASSETS.mkdir(exist_ok=True)
-    write_wav(ASSETS / "teleport_out.wav", teleport(reverse=False))
-    write_wav(ASSETS / "teleport_in.wav", teleport(reverse=True))
     write_wav(ASSETS / "particles_wind.wav", wind(), peak=0.7)
-    write_wav(ASSETS / "dissolve_shimmer.wav", shimmer(), peak=0.6)
+    dissolve = shimmer()
+    write_wav(ASSETS / "dissolve_shimmer.wav", dissolve, peak=0.6)
+    write_wav(ASSETS / "dissolve_gather.wav", gather(dissolve), peak=0.6)
     print(f"Sounds written to {ASSETS}")
 
 

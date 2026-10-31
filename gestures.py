@@ -467,7 +467,7 @@ class HoldTrigger:
     Short dropouts (a missed detection or two) do not restart the hold.
     """
 
-    def __init__(self, hold_seconds: float = 0.0, grace: float = 0.25, release: float = 0.4):
+    def __init__(self, hold_seconds: float = 0.0, grace: float = 0.25, release: float = 0.3):
         self.hold_seconds = hold_seconds
         self.grace = grace
         self.release = release
@@ -501,6 +501,10 @@ class HoldTrigger:
     def require_release(self) -> None:
         self.started = None
         self.armed = False
+
+    def blocked(self, now: float) -> bool:
+        """True while the sign is still up after firing, so it cannot fire again yet."""
+        return not self.armed and now - self.last_active < self.release
 
 
 # ------------------------------------------------------------ background work

@@ -3,10 +3,7 @@ import unittest
 import numpy as np
 
 from effects import IN, OUT, EFFECTS, create_effect
-from naruto_effect import (
-    EFFECT_SECONDS, falling_log_anchor, landed_log_anchor, load_log, overlay_log,
-    render_substitution, substitution_anchor,
-)
+import naruto_effect as naruto
 
 
 def scene(height=180, width=320):
@@ -28,15 +25,13 @@ class EveryEffectTests(unittest.TestCase):
                 effect = create_effect(mode)
                 effect.begin(OUT, frame, background, mask)
                 start = effect.render(frame, background, mask, 0.0)
-                if mode != "naruto":  # Naruto's smoke bursts on the very first frame.
-                    np.testing.assert_allclose(start[person].mean(axis=0), (40, 60, 220), atol=40)
+                np.testing.assert_allclose(start[person].mean(axis=0), (40, 60, 220), atol=40)
                 middle = effect.render(frame, background, mask, effect.seconds * 0.5)
                 self.assertTrue(np.any(middle != frame))
                 end = effect.render(frame, background, mask, effect.seconds)
                 gone = effect.vanished(background)
-                if mode != "naruto":  # Naruto leaves a log where you stood.
-                    self.assertLess(np.abs(end.astype(int) - background).mean(), 3)
-                    np.testing.assert_array_equal(gone, background)
+                self.assertLess(np.abs(end.astype(int) - background).mean(), 3)
+                np.testing.assert_array_equal(gone, background)
                 self.assertGreater(np.abs(end[person].astype(int) - frame[person]).mean(), 60)
 
                 effect.begin(IN, frame, background, mask)
@@ -62,79 +57,110 @@ class EveryEffectTests(unittest.TestCase):
             effect.begin(OUT, frame, background, empty)
             effect.render(frame, background, empty, effect.seconds * 0.4)
 
-    def test_particles_fly_downwind(self):
+    def test_dissolve_burns_from_the_head_down_with_a_cyan_edge(self):
+        frame, background, mask = scene()
+        effect = create_effect("normal")
+        effect.begin(OUT, frame, background, mask)
+        middle = effect.render(frame, background, mask, 0.75)
+        legs, head = np.s_[150:170, 140:180], np.s_[45:60, 140:180]
+        self.assertGreater(np.abs(middle[head].astype(int) - frame[head]).mean(), 60)
+        self.assertLess(np.abs(middle[legs].astype(int) - frame[legs]).mean(), 60)
+        # The edge glows: bright pixels, blue above red (BGR), somewhere on you.
+        glowing = (middle[:, :, 0] > 200) & (middle[:, :, 0] > middle[:, :, 2] + 40)
+        self.assertGreater(glowing.sum(), 20)
+
+    def test_particles_sweep_up_from_your_feet(self):
         frame, background, mask = scene()
         effect = create_effect("particles")
         effect.begin(OUT, frame, background, mask)
-        output = effect.render(frame, background, mask, 0.9)
-        changed = np.abs(output.astype(int) - background).sum(axis=2) > 30
-        changed[mask > 0] = False
-        columns = np.nonzero(changed.any(axis=0))[0]
-        self.assertGreater(columns.size, 0)
-        self.assertGreater(columns.mean(), 190)  # To the right of the person.
+        self.assertAlmostEqual(effect.seconds, 0.95)
+        middle = effect.render(frame, background, mask, 0.45)
+        legs, head = np.s_[150:170, 140:180], np.s_[45:60, 140:180]
+        # Below the front you are gone, above it you are still there.
+        self.assertGreater(np.abs(middle[legs].astype(int) - frame[legs]).mean(), 60)
+        self.assertLess(np.abs(middle[head].astype(int) - frame[head]).mean(), 10)
+        # The blocks around the front are cyan (BGR: blue and green high, red low).
+        cyan = (middle[:, :, 0] > 200) & (middle[:, :, 1] > 170) & (middle[:, :, 2] < 120)
+        self.assertGreater(cyan.sum(), 30)
 
-    def test_goku_lines_rise_then_linger_after_you_are_gone(self):
+    def test_particles_return_rebuilds_you_from_the_head_down(self):
+        frame, background, mask = scene()
+        effect = create_effect("particles")
+        effect.begin(IN, frame, background, mask)
+        early = effect.render(frame, background, mask, 0.6)
+        legs, head = np.s_[150:170, 140:180], np.s_[45:60, 140:180]
+        self.assertLess(np.abs(early[head].astype(int) - frame[head]).mean(), 10)
+        self.assertGreater(np.abs(early[legs].astype(int) - frame[legs]).mean(), 60)
+
+    def test_goku_follows_the_original_beats(self):
+        frame, background, mask = scene()
+        person = mask > 0
+        edge = np.zeros_like(person)
+        edge[38:42, 128:192] = True  # Just around the top of the head.
+        effect = create_effect("goku")
+        effect.begin(OUT, frame, background, mask)
+        self.assertAlmostEqual(effect.seconds, 0.30)
+        # Streaks fall over you while you are still there...
+        start = effect.render(frame, background, mask, 0.0)
+        self.assertGreater(np.abs(start.astype(int) - frame).max(), 100)
+        # ...three frames in you are gone, only your outline and the streaks remain.
+        gone = effect.render(frame, background, mask, 0.1)
+        self.assertGreater(np.abs(gone[person].astype(int) - frame[person]).mean(), 60)
+        self.assertGreater(gone[edge].max(), 200)
+        # Just before the end the streaks are gone and only the outline is left.
+        late = effect.render(frame, background, mask, 0.27)
+        changed = np.abs(late.astype(int) - background).sum(axis=2) > 60
+        near_edge = np.zeros_like(person)
+        near_edge[35:, 124:196] = True
+        self.assertTrue(changed[near_edge].any())
+        self.assertFalse(changed[~near_edge].any())
+
+    def test_goku_return_shows_the_outline_then_you(self):
+        frame, background, mask = scene()
+        person = mask > 0
+        effect = create_effect("goku")
+        effect.begin(IN, frame, background, mask)
+        first = effect.render(frame, background, mask, 0.0)
+        self.assertGreater(np.abs(first[person].astype(int) - frame[person]).mean(), 60)
+        self.assertGreater(np.abs(first.astype(int) - background).max(), 100)
+        popped = effect.render(frame, background, mask, 0.05)
+        self.assertLess(np.abs(popped[person].astype(int) - frame[person]).mean(), 40)
+
+    def test_goku_outline_skips_the_frame_border(self):
         frame, background, mask = scene()
         effect = create_effect("goku")
         effect.begin(OUT, frame, background, mask)
-        person = mask > 0
-        linger = effect.render(frame, background, mask, 0.7)
-        # You are gone but bright streaks remain over where you stood.
-        self.assertGreater(linger[person].max(), 200)
-        self.assertGreater(np.abs(linger.astype(int) - background)[person].mean(), 3)
+        points = np.concatenate(effect.outline) / 4
+        self.assertGreater(len(points), 20)
+        self.assertLess(points[:, 1].max(), frame.shape[0] - 2)  # No line along the bottom edge.
 
 
 class NarutoTests(unittest.TestCase):
-    def test_generated_asset_has_real_transparency(self):
-        sprite = load_log()
-        self.assertEqual(sprite.shape[2], 4)
-        self.assertEqual(int(sprite[:, :, 3].min()), 0)
-        self.assertEqual(int(sprite[:, :, 3].max()), 255)
+    def test_smoke_hides_you_completely_at_the_swap(self):
+        frame, background, mask = scene()
+        person = mask > 0
+        effect = create_effect("naruto")
+        for direction in (OUT, IN):
+            effect.begin(direction, frame, background, mask)
+            for age in (naruto.CUT - 0.01, naruto.CUT + 0.01):
+                hidden = effect.render(frame, background, mask, age)
+                # Pale smoke everywhere you are, neither you (red) nor the room (green).
+                self.assertGreater(hidden[person].min(), 120)
 
-    def test_smoke_animation_leaves_log_behind(self):
-        frame = np.full((160, 240, 3), 130, np.uint8)
-        background = np.full_like(frame, 35)
-        mask = np.ones(frame.shape[:2], np.float32)
-        sprite = load_log()
-        anchor = (120, 85, 100)
-        middle = render_substitution(frame, background, mask, sprite, anchor, 0.55)
-        final = render_substitution(frame, background, mask, sprite, anchor, EFFECT_SECONDS)
-        self.assertTrue(np.any(middle != frame))
-        self.assertTrue(np.any(middle != background))
-        self.assertTrue(np.any(final != background))
-        np.testing.assert_array_equal(final[0, 0], background[0, 0])
-
-    def test_log_anchor_tracks_person_region(self):
-        mask = np.zeros((160, 240), np.float32)
-        mask[20:130, 140:210] = 1.0
-        x, y, size = substitution_anchor(mask)
-        self.assertGreater(x, 140)
-        self.assertGreater(size, 35)
-        self.assertTrue(20 < y < 130)
-
-    def test_log_falls_then_stays_on_floor(self):
-        anchor = (120, 80, 90)
-        ys = [falling_log_anchor(anchor, 240, age)[1] for age in (0.1, 0.3, 0.5, 0.7)]
-        self.assertEqual(ys[0], anchor[1])
-        self.assertGreater(ys[2], ys[1])
-        self.assertGreater(ys[3], ys[2])
-        floor = landed_log_anchor(anchor, 240)
-        background = np.full((240, 240, 3), 35, np.uint8)
-        output = render_substitution(background, background, np.zeros((240, 240), np.float32),
-                                     load_log(), anchor, EFFECT_SECONDS)
-        expected = background.copy()
-        overlay_log(expected, load_log(), floor)
-        np.testing.assert_array_equal(output, expected)
-
-    def test_log_stays_while_vanished_and_goes_when_you_return(self):
-        frame, background, mask = scene(240, 320)
+    def test_smoke_clears_by_the_end(self):
+        frame, background, mask = scene()
         effect = create_effect("naruto")
         effect.begin(OUT, frame, background, mask)
-        self.assertTrue(np.any(effect.vanished(background) != background))
-        effect.begin(IN, frame, background, mask)
-        back = effect.render(frame, background, mask, effect.seconds)
-        outside = mask == 0
-        self.assertLess(np.abs(back[outside].astype(int) - background[outside]).mean(), 2)
+        self.assertIsNone(effect.cloud.layer(naruto.SECONDS))
+        late = effect.render(frame, background, mask, naruto.SECONDS - 0.01)
+        self.assertLess(np.abs(late.astype(int) - background).mean(), 3)
+
+    def test_burst_still_works_with_nobody_in_view(self):
+        frame, background, _ = scene()
+        effect = create_effect("naruto")
+        effect.begin(OUT, frame, background, np.zeros(frame.shape[:2], np.float32))
+        middle = effect.render(frame, background, background[:, :, 0] * 0.0, 0.3)
+        self.assertTrue(np.any(middle != frame))
 
 
 if __name__ == "__main__":

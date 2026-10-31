@@ -11,12 +11,11 @@ resources = [
     (root / "models" / "gesture_recognizer.task", "models"),
     (root / "models" / "selfie_segmenter_landscape.tflite", "models"),
     (root / "face_landmarker.task", "."),
-    (root / "assets" / "substitution_log.png", "assets"),
     (root / "assets" / "vanish.MP3", "assets"),
-    (root / "assets" / "teleport_out.wav", "assets"),
-    (root / "assets" / "teleport_in.wav", "assets"),
+    (root / "assets" / "teleport.wav", "assets"),
     (root / "assets" / "particles_wind.wav", "assets"),
     (root / "assets" / "dissolve_shimmer.wav", "assets"),
+    (root / "assets" / "dissolve_gather.wav", "assets"),
 ]
 missing = [str(path) for path, _ in resources if not path.is_file()]
 if not icon_file.is_file():
