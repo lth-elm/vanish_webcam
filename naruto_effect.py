@@ -1,4 +1,4 @@
-"""Two-hand trigger and smoke/log compositing for body substitution."""
+"""Smoke and log compositing for the Naruto body substitution."""
 
 from __future__ import annotations
 
@@ -10,32 +10,8 @@ import numpy as np
 
 
 EFFECT_SECONDS = 1.45
+RETURN_SECONDS = 1.0
 LOG_PATH = Path(__file__).resolve().parent / "assets" / "substitution_log.png"
-
-
-def joined_hands_from_landmarks(hands, width: int, height: int) -> bool:
-    """Recognize two nearby, similarly oriented open hands in image space."""
-    if len(hands) < 2:
-        return False
-    points = [np.array([(p.x * width, p.y * height) for p in hand])
-              for hand in hands[:2] if len(hand) == 21]
-    if len(points) != 2 or not all(np.isfinite(hand).all() for hand in points):
-        return False
-    palms = [hand[[0, 5, 9, 13, 17]].mean(axis=0) for hand in points]
-    scale = [max(float(np.linalg.norm(hand[5] - hand[17])),
-                 float(np.linalg.norm(hand[0] - hand[9]))) for hand in points]
-    if min(scale) < 8.0 or max(scale) > min(scale) * 2.2:
-        return False
-    size = sum(scale) * 0.5
-    directions = [hand[9] - hand[0] for hand in points]
-    alignment = float(np.dot(*directions) /
-                      max(1e-6, np.linalg.norm(directions[0]) * np.linalg.norm(directions[1])))
-    fingertips = [hand[[8, 12, 16, 20]].mean(axis=0) for hand in points]
-    return (
-        alignment > 0.25
-        and np.linalg.norm(palms[0] - palms[1]) < size * 1.55
-        and np.linalg.norm(fingertips[0] - fingertips[1]) < size * 1.9
-    )
 
 
 def substitution_anchor(mask: np.ndarray) -> tuple[int, int, int]:
@@ -56,7 +32,7 @@ def substitution_anchor(mask: np.ndarray) -> tuple[int, int, int]:
 def load_log() -> np.ndarray:
     sprite = cv2.imread(str(LOG_PATH), cv2.IMREAD_UNCHANGED)
     if sprite is None or sprite.ndim != 3 or sprite.shape[2] != 4:
-        raise RuntimeError(f"Sprite del tronco non disponibile: {LOG_PATH}")
+        raise RuntimeError(f"Log sprite not available: {LOG_PATH}")
     return sprite
 
 
@@ -164,6 +140,20 @@ def _smoke_layer(frame: np.ndarray, anchor: tuple[int, int, int],
     ).astype(np.uint8)
 
 
+def blend_person(output: np.ndarray, frame: np.ndarray, mask: np.ndarray, opacity: float) -> None:
+    """Draw the person from `frame` onto `output`, touching only the area around them."""
+    if opacity <= 0:
+        return
+    points = cv2.findNonZero((mask > 0.01).astype(np.uint8))
+    if points is None:
+        return
+    x, y, width, height = cv2.boundingRect(points)
+    area = np.s_[y:y + height, x:x + width]
+    alpha = (mask[area] * opacity)[:, :, None]
+    output[area] = (frame[area].astype(np.float32) * alpha
+                    + output[area].astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
+
+
 def render_substitution(frame: np.ndarray, background: np.ndarray, mask: np.ndarray,
                         sprite: np.ndarray, anchor: tuple[int, int, int], age: float,
                         log_cache: dict[int, np.ndarray] | None = None) -> np.ndarray:
@@ -172,18 +162,29 @@ def render_substitution(frame: np.ndarray, background: np.ndarray, mask: np.ndar
         output = background.copy()
         overlay_log(output, sprite, landed_log_anchor(anchor, output.shape[0]), cache=log_cache)
         return output
-    if age >= 0.13:
-        output = background.copy()
-    else:
-        person_alpha = mask * max(0.0, 1.0 - age / 0.13)
-        output = (
-            frame.astype(np.float32) * person_alpha[:, :, None]
-            + background.astype(np.float32) * (1.0 - person_alpha[:, :, None])
-        ).astype(np.uint8)
+    output = background.copy()
+    if age < 0.13:
+        blend_person(output, frame, mask, 1.0 - age / 0.13)
     _smoke_layer(output, anchor, age, foreground=False)
     log_opacity = min(1.0, max(0.0, (age - 0.05) / 0.15))
     moving_anchor = falling_log_anchor(anchor, output.shape[0], age)
     overlay_log(output, sprite, moving_anchor, log_opacity,
                 scale=1.15 - min(age, 0.25) * 0.6, cache=log_cache)
     _smoke_layer(output, anchor, age, foreground=True)
+    return output
+
+
+def render_return(frame: np.ndarray, background: np.ndarray, mask: np.ndarray,
+                  sprite: np.ndarray, anchor: tuple[int, int, int],
+                  log_anchor: tuple[int, int, int] | None, age: float,
+                  log_cache: dict[int, np.ndarray] | None = None) -> np.ndarray:
+    """Smoke bursts where you stand, the log vanishes in it and you step out."""
+    output = background.copy()
+    if log_anchor is not None:
+        overlay_log(output, sprite, log_anchor, max(0.0, 1.0 - age / 0.18), cache=log_cache)
+    # Reuse the vanish smoke timeline, slightly faster for the return.
+    smoke_age = age * EFFECT_SECONDS / RETURN_SECONDS
+    _smoke_layer(output, anchor, smoke_age, foreground=False)
+    blend_person(output, frame, mask, float(np.clip((age - 0.08) / 0.2, 0.0, 1.0)))
+    _smoke_layer(output, anchor, smoke_age, foreground=True)
     return output

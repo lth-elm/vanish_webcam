@@ -3,3 +3,5 @@ opencv-contrib-python>=4.14,<6
 numpy>=2.0,<3
 pyvirtualcam>=0.15,<1
 pygame>=2.6,<3
+PySide6-Essentials>=6.7,<7
+pyobjc-framework-AVFoundation>=10; sys_platform == "darwin"
